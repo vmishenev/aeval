@@ -224,13 +224,13 @@ include_directories(BEFORE
 
 add_custom_target(
    synthlib2parser_make
-   COMMAND make
+   COMMAND make #SYNTH_LIB_PARSER_ROOT=${CMAKE_SOURCE_DIR}/synthlib2parser
    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/synthlib2parser
 )
 add_library(synthlib2parser STATIC IMPORTED)
 set_property(TARGET synthlib2parser PROPERTY
              IMPORTED_LOCATION ${CMAKE_SOURCE_DIR}/synthlib2parser/lib/debug/libsynthlib2parser.a)
-
+add_dependencies(synthlib2parser synthlib2parser_make)
 include_directories(BEFORE
   ${CMAKE_SOURCE_DIR}/synthlib2parser/src/include)
 
