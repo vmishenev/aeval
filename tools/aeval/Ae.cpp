@@ -1,6 +1,10 @@
+#include <exception>
 #include "ae/AeValSolver.hpp"
 #include "ufo/Smt/EZ3.hh"
+#include "SynthLib2ParserIFace.hpp"
 
+
+using namespace SynthLib2Parser;
 using namespace ufo;
 
 /** An AE-VAL wrapper for cmd
@@ -20,6 +24,7 @@ using namespace ufo;
  *   ../test/ae/example1_t_part.smt2
  *
  */
+
 
 bool getBoolValue(const char * opt, bool defValue, int argc, char ** argv)
 {
@@ -45,6 +50,21 @@ char * getSmtFileName(int num, int argc, char ** argv)
   return NULL;
 }
 
+char * getSlFileName(int num, int argc, char ** argv)
+{
+  int num1 = 1;
+  for (int i = 1; i < argc; i++)
+  {
+    int len = strlen(argv[i]);
+    if (len >= 5 && strcmp(argv[i] + len - 3, ".sl") == 0)
+    {
+      if (num1 == num) return argv[i];
+      else num1++;
+    }
+  }
+  return NULL;
+}
+
 int main (int argc, char ** argv)
 {
 
@@ -55,6 +75,23 @@ int main (int argc, char ** argv)
   bool allincl = getBoolValue("--all-inclusive", false, argc, argv);
   bool compact = getBoolValue("--compact", false, argc, argv);
   bool debug = getBoolValue("--debug", false, argc, argv);
+  bool sl = getBoolValue("--sl", false, argc, argv);
+  if(sl) {
+    char *fname = getSlFileName(1, argc, argv);
+    cout << "read file "<< fname<< endl;
+    SynthLib2Parser::SynthLib2Parser* Parser = new SynthLib2Parser::SynthLib2Parser();
+    cout << "create parser "<< endl;
+   try {
+        (*Parser)(fname);
+   } catch (const std::exception& Ex) {
+      cout << "Error "<< endl;
+        cout << Ex.what() << endl;
+       exit(1);
+   }
+
+    cout << (*Parser->GetProgram()) << endl;
+    delete Parser;
+  }
 
   Expr s = z3_from_smtlib_file (z3, getSmtFileName(1, argc, argv));
   Expr t = z3_from_smtlib_file (z3, getSmtFileName(2, argc, argv));
