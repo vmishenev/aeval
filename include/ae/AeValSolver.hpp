@@ -79,6 +79,45 @@ namespace ufo
       skolSkope = mk<TRUE>(efac);
     }
 
+    AeValSolver ( Expr _st, ExprSet &_v, bool _debug, bool _skol) :
+      t(_st), v(_v),
+      efac(_st->getFactory()),
+      z3(efac),
+      smt (z3),
+      u(efac),
+      fresh_var_ind(0),
+      partitioning_size(0),
+      skol(_skol),
+      debug(_debug)
+    {
+      outs() << "vars preinitialized "<<"\n";
+      s = mk<TRUE>(efac);// TODO
+    
+      filter (_st, bind::IsConst (), back_inserter (stVars));
+
+      ExprSet stVars_set(stVars.begin(), stVars.end());
+      ExprSet sVars_set  = minusSets(stVars_set, _v);
+      for (auto &exp: sVars_set) 
+        sVars.emplace_back(exp);
+      outs() << "vars initialized "<<"\n";
+      getConj(t, tConjs);
+
+      for (auto &exp: v) {
+        if (!bind::isBoolConst(exp)) continue;
+        Expr definition = getBoolDefinitionFormulaFromT(exp);
+        if (definition != NULL) defMap[exp] = u.simplifyITE(definition);
+      }
+
+      for (auto &exp: v) {
+        if (defMap[exp] != NULL) continue;
+        Expr definition = getDefinitionFormulaFromT(exp);
+        if (definition != NULL) defMap[exp] = u.simplifyITE(definition);
+      }
+
+      splitDefs(defMap, cyclicDefs);
+      skolSkope = mk<TRUE>(efac);
+    }
+
     void splitDefs (ExprMap &m1, ExprMap &m2, int curCnt = 0)
     {
       ExprMap m3;
@@ -1274,11 +1313,24 @@ namespace ufo
     filter (s, bind::IsConst (), inserter (s_vars, s_vars.begin()));
     filter (t, bind::IsConst (), inserter (t_vars, t_vars.begin()));
 
-    ExprSet t_quantified = minusSets(t_vars, s_vars);
+    ExprSet t_quantified = minusSets(t_vars, s_vars); // // existentially quantified vars
+
+
+    
 
     s = convertIntsToReals<DIV>(s);
     t = convertIntsToReals<DIV>(t);
-
+    /** An AE-VAL wrapper for cmd
+ *
+ * Usage: specify 2 smt2-files that describe the formula \foral x. S(x) => \exists y . T (x, y)
+ *   <s_part.smt2> = S-part (over x)
+ *   <t_part.smt2> = T-part (over x, y)
+ *   --skol = to print skolem function
+ *   --debug = to print more info and perform sanity checks
+ *
+ * Notably, the tool automatically recognizes x and y based on their appearances in S or T.
+ *
+ */
     if (debug)
     {
       outs() << "S: " << *s << "\n";
@@ -1289,6 +1341,43 @@ namespace ufo
 
     AeValSolver ae(s, t, t_quantified, debug, skol);
 
+    if (ae.solve()){
+      outs () << "Iter: " << ae.getPartitioningSize() << "; Result: invalid\n";
+      ae.printModelNeg();
+      outs() << "\nvalid subset:\n";
+      ae.serialize_formula(ae.getValidSubset());
+    } else {
+      outs () << "Iter: " << ae.getPartitioningSize() << "; Result: valid\n";
+      if (skol)
+      {
+        outs() << "\nextracted skolem:\n";
+        Expr skol = ae.getSkolemFunction(compact);
+        ae.serialize_formula(skol);
+      }
+    }
+  }
+
+
+  /**
+   * Simple wrapper
+   */
+  inline void aeSolveAndSkolemize(Expr t, ExprSet &var_exist_quantified,  bool skol, bool debug, bool compact)
+  {
+  
+    t = convertIntsToReals<DIV>(t);
+
+    if (debug)
+    {
+      outs() << "T: \\exists ";
+      for (auto &a: var_exist_quantified) outs() << *a << ", ";
+      outs() << *t << "\n";
+    }
+
+    AeValSolver ae(t, var_exist_quantified, debug, skol);
+    if (debug)
+    {
+      outs() << "AeValSolver initialized"<< "\n";
+    }
     if (ae.solve()){
       outs () << "Iter: " << ae.getPartitioningSize() << "; Result: invalid\n";
       ae.printModelNeg();

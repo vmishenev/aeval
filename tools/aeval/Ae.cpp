@@ -1,5 +1,6 @@
 #include <exception>
 #include "ae/AeValSolver.hpp"
+#include "ae/MarshallVisitor.hpp"
 #include "ufo/Smt/EZ3.hh"
 #include "SynthLib2ParserIFace.hpp"
 
@@ -26,80 +27,84 @@ using namespace ufo;
  */
 
 
-bool getBoolValue(const char * opt, bool defValue, int argc, char ** argv)
+bool getBoolValue(const char *opt, bool defValue, int argc, char **argv)
 {
-  for (int i = 1; i < argc; i++)
-  {
-    if (strcmp(argv[i], opt) == 0) return true;
-  }
-  return defValue;
-}
-
-char * getSmtFileName(int num, int argc, char ** argv)
-{
-  int num1 = 1;
-  for (int i = 1; i < argc; i++)
-  {
-    int len = strlen(argv[i]);
-    if (len >= 5 && strcmp(argv[i] + len - 5, ".smt2") == 0)
+    for (int i = 1; i < argc; i++)
     {
-      if (num1 == num) return argv[i];
-      else num1++;
+        if (strcmp(argv[i], opt) == 0) return true;
     }
-  }
-  return NULL;
+    return defValue;
 }
 
-char * getSlFileName(int num, int argc, char ** argv)
+char *getSmtFileName(int num, int argc, char **argv)
 {
-  int num1 = 1;
-  for (int i = 1; i < argc; i++)
-  {
-    int len = strlen(argv[i]);
-    if (len >= 5 && strcmp(argv[i] + len - 3, ".sl") == 0)
+    int num1 = 1;
+    for (int i = 1; i < argc; i++)
     {
-      if (num1 == num) return argv[i];
-      else num1++;
+        int len = strlen(argv[i]);
+        if (len >= 5 && strcmp(argv[i] + len - 5, ".smt2") == 0)
+        {
+            if (num1 == num) return argv[i];
+            else num1++;
+        }
     }
-  }
-  return NULL;
+    return NULL;
 }
 
-int main (int argc, char ** argv)
+char *getSlFileName(int num, int argc, char **argv)
+{
+    int num1 = 1;
+    for (int i = 1; i < argc; i++)
+    {
+        int len = strlen(argv[i]);
+        if (len >= 5 && strcmp(argv[i] + len - 3, ".sl") == 0)
+        {
+            if (num1 == num) return argv[i];
+            else num1++;
+        }
+    }
+    return NULL;
+}
+
+int main (int argc, char **argv)
 {
 
-  ExprFactory efac;
-  EZ3 z3(efac);
+    ExprFactory efac;
 
-  bool skol = getBoolValue("--skol", false, argc, argv);
-  bool allincl = getBoolValue("--all-inclusive", false, argc, argv);
-  bool compact = getBoolValue("--compact", false, argc, argv);
-  bool debug = getBoolValue("--debug", false, argc, argv);
-  bool sl = getBoolValue("--sl", false, argc, argv);
-  if(sl) {
-    char *fname = getSlFileName(1, argc, argv);
-    cout << "read file "<< fname<< endl;
-    SynthLib2Parser::SynthLib2Parser* Parser = new SynthLib2Parser::SynthLib2Parser();
-    cout << "create parser "<< endl;
-   try {
-        (*Parser)(fname);
-   } catch (const std::exception& Ex) {
-      cout << "Error "<< endl;
-        cout << Ex.what() << endl;
-       exit(1);
-   }
 
-    cout << (*Parser->GetProgram()) << endl;
-    delete Parser;
-  }
+    bool skol = getBoolValue("--skol", false, argc, argv);
+    bool allincl = getBoolValue("--all-inclusive", false, argc, argv);
+    bool compact = getBoolValue("--compact", false, argc, argv);
+    bool debug = getBoolValue("--debug", false, argc, argv);
+    bool sl = getBoolValue("--sl", false, argc, argv);
+    if(sl) // for synth-lib format
+    {
+        char *fname = getSlFileName(1, argc, argv);
+        cout << "read file " << fname << endl;
+        try
+        {
+            ae::MarshallVisitor::Solve(fname, efac, skol, allincl);
+        }
+        catch (const std::exception &Ex)
+        {
+            std::cerr << "Error " << endl;
+            std::cerr << Ex.what() << endl;
+            exit(1);
+        }
+        return 0;
 
-  Expr s = z3_from_smtlib_file (z3, getSmtFileName(1, argc, argv));
-  Expr t = z3_from_smtlib_file (z3, getSmtFileName(2, argc, argv));
+    }
 
-  if (allincl)
-    getAllInclusiveSkolem(s, t, debug, compact);
-  else
-    aeSolveAndSkolemize(s, t, skol, debug, compact);
+    EZ3 z3(efac);
+    Expr s = z3_from_smtlib_file (z3, getSmtFileName(1, argc, argv));
+    std::cout << "----------" << std::endl;
+    Expr t = z3_from_smtlib_file (z3, getSmtFileName(2, argc, argv));
 
-  return 0;
+    if (allincl)
+        getAllInclusiveSkolem(s, t, debug, compact);
+    else
+        aeSolveAndSkolemize(s, t, skol, debug, compact);
+
+    return 0;
 }
+
