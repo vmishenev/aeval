@@ -27,6 +27,26 @@ namespace ae
         return Name + "_@_" + std::to_string(param);
     }
 
+    bool iequals(const string &a, const string &b)
+    {
+        unsigned int sz = a.size();
+        if (b.size() != sz)
+            return false;
+        for (unsigned int i = 0; i < sz; ++i)
+            if (tolower(a[i]) != tolower(b[i]))
+                return false;
+        return true;
+    }
+    struct FunDef
+    {
+        //TODo constructor for check size names and sorts
+        std::string Name;
+        std::vector< Expr  > ArgNames;
+        std::vector< Expr > ArgSort;
+        Expr ReturnSort;
+        Expr Body;
+    };
+
     class MarshallVisitor : public SynthLib2Parser::ASTVisitorBase
     {
     private:
@@ -50,10 +70,12 @@ namespace ae
 
         std::vector<Expr> Constaraints;
         std::set<Expr> SynthFnsVars;
+        std::multimap<std::string, FunDef> DefFns;
 
-        /*
-         vector<map<string, Expression>> LetVarExpressionStack;
-         vector<map<Expression, Expression>> LetVarBindingStack;*/
+        std::map<std::string, Expr> ArgMap;
+
+        std::vector<std::map<std::string, Expr>> LetVarExpressionStack;
+        /*vector<map<Expression, Expression>> LetVarBindingStack;*/
 
     public:
         MarshallVisitor(ExprFactory &efac);
@@ -74,11 +96,12 @@ namespace ae
         virtual void VisitFunTerm(const SynthLib2Parser::FunTerm *TheTerm) override;
         virtual void VisitLiteralTerm(const SynthLib2Parser::LiteralTerm *TheTerm) override;
         virtual void VisitSymbolTerm(const SynthLib2Parser::SymbolTerm *TheTerm) override;
+        virtual void VisitFunDefCmd(const SynthLib2Parser::FunDefCmd *Cmd) override;
+        virtual void VisitLetTerm(const SynthLib2Parser::LetTerm *TheTerm) override;
 
-        /* virtual void VisitLetTerm(const SynthLib2Parser::LetTerm *TheTerm) override;
 
-          virtual void VisitFunDefCmd(const SynthLib2Parser::FunDefCmd *Cmd) override;
 
+        /*
           virtual void VisitSortDefCmd(const SynthLib2Parser::SortDefCmd *Cmd) override;
           virtual void VisitSetOptsCmd(const SynthLib2Parser::SetOptsCmd *Cmd) override;
           */
@@ -117,6 +140,7 @@ namespace ae
     {
         MarshallVisitor AeSynth(efac);
         SynthLib2Parser::SynthLib2Parser Parser;
+        std::cout << "try read file" << std::endl;
         try
         {
             Parser(InFileName);
@@ -127,6 +151,7 @@ namespace ae
             cout << Ex.what() << endl;
             throw Ex;
         }
+        std::cout << "readed file" << std::endl;
         Parser.GetProgram()->Accept(&AeSynth);
         return;
     }
@@ -150,6 +175,78 @@ namespace ae
     void MarshallVisitor::VisitProgram(const Program *Prog)
     {
         ASTVisitorBase::VisitProgram(Prog);
+    }
+
+    void MarshallVisitor::VisitLetTerm(const LetTerm *TheTerm)
+    {
+        //throw UnimplementedException((string)"Let-term are not supported yet.");
+        std::cout << "visit let term" << std::endl;
+        std::map<std::string, Expr> NewLetVarExpressionMap;
+
+        auto const &Bindings = TheTerm->GetBindings();
+        const size_t NumBindings = Bindings.size();
+        for (size_t i = 0; i < NumBindings; ++i)
+        {
+            // TODO ckeck sort
+            Bindings[i]->GetVarSort()->Accept(this);
+            //auto CurSort = SortStack.back(); //unused
+            SortStack.pop_back();
+            auto const &CurVarName = Bindings[i]->GetVarName();
+
+            Bindings[i]->Accept(this);
+
+            NewLetVarExpressionMap[CurVarName] = ProcessedTermStack.back();
+            ProcessedTermStack.pop_back();
+        }
+
+        LetVarExpressionStack.push_back(NewLetVarExpressionMap);
+
+        TheTerm->GetBoundInTerm()->Accept(this);
+        // Pop the stacks
+        LetVarExpressionStack.pop_back();
+
+
+    }
+
+    void MarshallVisitor::VisitFunDefCmd(const FunDefCmd *Cmd)
+    {
+        InFunDef = true;
+        // Populate the arg maps
+        ArgMap.clear();
+        //uint32 CurPosition = 0;
+        std::vector<SortType> ArgTypes;
+        std::vector<Expr> ArgNames;
+        for (auto const ASPair : Cmd->GetArgs())
+        {
+            if (ArgMap.find(ASPair->GetName()) != ArgMap.end())
+            {
+                throw AeValException("Error, parameter identifer \"" + ASPair->GetName() +
+                                     "\" has been reused");
+            }
+            // Visit the sort
+            ASPair->GetSort()->Accept(this);
+            auto Type = SortStack.back();
+            ArgTypes.push_back(Type);
+            ArgNames.push_back(mkTerm<std::string>(ASPair->GetName(), efac) );
+            SortStack.pop_back();
+            ArgMap[ASPair->GetName()] =  mkTerm<std::string>(ASPair->GetName(), efac);
+        }
+        // Process the return type
+        Cmd->GetSort()->Accept(this);
+        auto Type = SortStack.back();
+        SortStack.pop_back();
+        // now process the term
+        Cmd->GetTerm()->Accept(this);
+        // Create the function
+        auto Exp = ProcessedTermStack.back();
+        ProcessedTermStack.pop_back();
+
+
+        DefFns.emplace(std::pair<std::string, FunDef>( Cmd->GetFunName(), FunDef{Cmd->GetFunName(), ArgNames, ArgTypes, Type, Exp}));
+
+        std::cout << "def-fun " << Cmd->GetFunName() << "(" << ArgNames.size() << ") " << Exp << std::endl;
+        InFunDef = false;
+        ArgMap.clear();
     }
 
     void MarshallVisitor::VisitFunDeclCmd(const FunDeclCmd *Cmd)
@@ -220,7 +317,15 @@ namespace ae
         std::string snum = TheLit->GetLiteralString();
         std::cout << "# VisitLiteralTerm: " << TheLit->GetLiteralString() << std::endl;
         Expr e;
-        if(CurrentTheory == Theories::Reals)
+        if(iequals(snum, "true"))
+        {
+            e = mk<TRUE> (efac);
+        }
+        else if(iequals(snum, "false"))
+        {
+            e = mk<FALSE> (efac);
+        }
+        else if(CurrentTheory == Theories::Reals)
             e =  mkTerm (mpq_class (snum), efac);
         else if(CurrentTheory == Theories::LIA)
             e =  mkTerm (mpz_class (snum), efac);
@@ -259,7 +364,7 @@ namespace ae
             ProcessedTermStack.pop_back();
         }
         Expr e;
-        bool isFound = true;
+        bool isFound = false;
         std::string FnName =   TheTerm->GetFunName();
         // Find fun term in Synth functions
         //auto it = SynthFunExpr.find (FnName);
@@ -270,17 +375,39 @@ namespace ae
             ExprVector EmptyArgs;
             e =  bind::fapp (it->second, EmptyArgs);
             SynthFnsVars.emplace(e);
+            isFound = true;
         }
-        else if(false)
-        {
-            // Find funTerm in Defined functions
-            // TODO
 
+        if( !isFound)   // Find funTerm in Defined functions
+        {
+
+            auto result_defs = DefFns.equal_range(FnName);
+            //TODO ckeck sorts of call and definition sorts
+            //for( auto fd_pair :result_defs) {
+
+            for (auto it = result_defs.first; it != result_defs.second; it++)
+            {
+                FunDef df = it->second;
+                std::cout << "!!! find " << df.Body << std::endl;
+                if(df.ArgNames.size() !=  NumArgs)
+                    continue;
+                // substitution
+                ExprVector ArgNameTerms(NumArgs);
+                e = replaceAll(df.Body, df.ArgNames, args );
+
+                isFound = true;
+
+            }
 
         }
-        else      // Find funTerm in Theory functions
+        if(!isFound)      // Find funTerm in Theory functions
         {
-            if(FnName ==  "and")
+            isFound = true;
+            if(FnName ==  "not" && NumArgs == 1)
+            {
+                e = mk<NEG>  (*args.begin());
+            }
+            else if(FnName ==  "and")
             {
                 e = mknary<AND> (args.begin(), args.end());
             }
@@ -332,6 +459,10 @@ namespace ae
             {
                 e =  mknary<MOD> (args.begin(), args.end());
             }
+            else if(FnName ==  "ite")
+            {
+                e =  mknary<ITE> (args.begin(), args.end());
+            }
             else
             {
                 isFound = false;
@@ -348,7 +479,7 @@ namespace ae
         }
         else
         {
-            throw AeValException("Not found FunTerm");
+            throw AeValException(std::string("Not found FunTerm: ") + FnName);
         }
 
     }
@@ -403,8 +534,38 @@ namespace ae
     void MarshallVisitor::VisitSymbolTerm(const SymbolTerm *TheTerm)
     {
         std::cout << "VisitSymbolTerm: " << TheTerm->GetSymbol() << std::endl;
+
+        std::string VarName = TheTerm->GetSymbol();
+
+        /*Find as Let-Binding*/
+        for (auto it = LetVarExpressionStack.rbegin(); it != LetVarExpressionStack.rend(); ++it)
+        {
+            auto const &CurMap = *it;
+            auto MapIt = CurMap.find(VarName);
+            if (MapIt != CurMap.end())
+            {
+                ProcessedTermStack.push_back(MapIt->second);
+                return;
+            }
+        }
+
+        /*Find as Arg*/
+        if (InFunDef)
+        {
+            auto it = ArgMap.find(VarName);
+            if (it != ArgMap.end())
+            {
+                ExprVector args;
+                Expr e =  bind::fapp (it->second, args);
+                ProcessedTermStack.push_back(e);
+                return;
+            }
+        }
+
+
+
         /*Find Var*/
-        auto it = VarExpr.find (TheTerm->GetSymbol());
+        auto it = VarExpr.find (VarName);
         if (it != VarExpr.end ())
         {
             ExprVector args;
@@ -485,7 +646,7 @@ namespace ae
 
     void MarshallVisitor::VisitBoolSortExpr(const BoolSortExpr *Sort)
     {
-        auto Type = sort::intTy (efac);
+        auto Type = sort::boolTy (efac);
         if (InSortDef)
         {
             //BindType(SortName, Type);
